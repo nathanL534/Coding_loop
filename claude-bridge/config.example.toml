@@ -1,0 +1,24 @@
+# Copy to config.toml and fill in. Never commit config.toml.
+
+[bridge]
+socket_path = "/tmp/claude-bridge.sock"
+state_dir = "~/.claude-bridge"           # budget.json, audit.log, pause.flag live here
+safety_dir = "../safety"                  # relative to bridge dir, points at repo /safety
+
+[claude]
+# Path to the claude CLI binary. Default: `claude` on PATH.
+cli_path = "claude"
+# Subprocess timeout in seconds per request.
+timeout_seconds = 120
+
+[telegram]
+# From @BotFather. Lives host-side only; never pass into container.
+bot_token = "PASTE_BOT_TOKEN_HERE"
+# Your Telegram user ID. Bridge rejects all other chats.
+allowed_user_id = 0
+# Polling vs webhook. Polling is simpler for a single-user bot.
+mode = "polling"
+
+[budget]
+# These override safety/budget.yaml for development; in production, the YAML wins.
+# Leaving empty here = use YAML.

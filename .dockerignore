@@ -1,0 +1,17 @@
+.git/
+.github/
+claude-bridge/.venv/
+claude-bridge/tests/
+agent/.venv/
+agent/tests/
+**/__pycache__/
+**/.pytest_cache/
+**/*.pyc
+docs/
+scripts/
+README.md
+data/
+logs/
+memory/
+*.md
+!CLAUDE.md

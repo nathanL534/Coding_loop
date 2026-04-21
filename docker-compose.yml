@@ -1,0 +1,54 @@
+# Hardened container spec.
+# On macOS: socket path is /tmp/claude-bridge.sock (see claude-bridge/config.example.toml).
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        AGENT_UID: "10001"
+        AGENT_GID: "10001"
+    image: coding-loop-agent:local
+    container_name: coding-loop-agent
+    restart: unless-stopped
+    init: true
+
+    # Hardening
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: "1.5"
+    user: "10001:10001"
+
+    environment:
+      AGENT_MODE: listen
+      BRIDGE_SOCKET: /run/claude-bridge.sock
+      AGENT_STATE: /data/state.json
+      TZ: America/New_York
+
+    volumes:
+      # Host -> container, read-only. Safety files immutable from container's POV.
+      - ./safety:/safety:ro
+      - ./safety/goals.md:/goals.md:ro
+      # Bridge socket (host). On macOS Orbstack/Docker, ensure the host-side socket exists first.
+      - /tmp/claude-bridge.sock:/run/claude-bridge.sock
+      # Mutable data: memory DB, state.json, evolver checkout.
+      - agent-data:/data
+      - agent-memory:/memory
+      # tmpfs for /tmp since root FS is read-only.
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+
+    # Network isolation: block direct internet, allow only the egress proxy (optional).
+    # For Phase 1 we keep bridge+telegram paths on the host, so the container does not
+    # need external network at all — the socket is the only route.
+    network_mode: none
+
+volumes:
+  agent-data:
+  agent-memory:

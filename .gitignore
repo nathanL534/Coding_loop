@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.env
+.env.local
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local runtime state (NEVER commit). Anchored to repo root to avoid
+# shadowing source dirs like agent/src/agent/memory/.
+/data/
+/logs/
+/memory/
+/sessions/
+/approval_queue/
+.claude-bridge/
+
+# Agent-produced artifacts (anywhere)
+*.db
+*.sqlite
+*.sqlite3
+audit.log
+state.json
+budget.json
+pause.flag
+
+# Secrets
+secrets/
+*.pem
+*.key
+config.toml
+config.local.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Docker
+.dockerignore.bak

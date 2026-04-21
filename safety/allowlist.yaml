@@ -1,0 +1,47 @@
+# Actions the agent may take without per-request approval.
+# Anything not listed requires Telegram yes/no via bridge /v1/approve-required.
+# Host-mounted read-only into container. Container cannot edit.
+
+auto_approved:
+  - memory.read
+  - memory.write                   # L2, L3, L4 only. L0 never.
+  - telegram.send_to_owner          # only to allowed_user_id
+  - task_queue.*
+  - research.web_fetch              # GET only, allowlist domains
+  - research.synthesize
+  - calendar.read
+  - git.commit                      # to evolve/* branches only
+  - git.read
+  - state.read
+  - state.write
+
+require_approval:
+  - git.push
+  - git.merge_to_main
+  - email.send
+  - email.draft
+  - calendar.write
+  - browser.post                    # any form submit / click
+  - browser.nav_to_new_domain
+  - file.delete
+  - tasks.spend_money
+  - shell.*                         # anything the agent tries to shell out
+
+forbidden:
+  - safety.*                        # read-only anyway
+  - bridge.*
+  - memory.delete_L0
+  - memory.delete_L2                # user-edited only
+  - git.force_push
+  - git.reset_hard
+  - oauth.*
+
+# Domain allowlist for research.web_fetch
+research_domains:
+  - wikipedia.org
+  - arxiv.org
+  - github.com
+  - stackexchange.com
+  - stackoverflow.com
+  - docs.python.org
+  - developer.mozilla.org

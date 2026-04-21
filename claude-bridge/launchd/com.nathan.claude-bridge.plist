@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Deploy to: ~/Library/LaunchAgents/com.nathan.claude-bridge.plist
+  Load:     launchctl load ~/Library/LaunchAgents/com.nathan.claude-bridge.plist
+  Unload:   launchctl unload ~/Library/LaunchAgents/com.nathan.claude-bridge.plist
+
+  REPLACE the paths below before loading.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nathan.claude-bridge</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/nathan/Coding_loop/claude-bridge/.venv/bin/python</string>
+        <string>-m</string>
+        <string>bridge.main</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/nathan/Coding_loop/claude-bridge</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRIDGE_CONFIG</key>
+        <string>/Users/nathan/Coding_loop/claude-bridge/config.toml</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nathan/Library/Logs/claude-bridge.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/nathan/Library/Logs/claude-bridge.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
