@@ -1,0 +1,18 @@
+# Bridge-enforced. Container cannot override.
+
+daily_usd_cap: 2.00
+per_wake_usd_cap: 0.50
+per_request_usd_cap: 0.15
+per_request_timeout_seconds: 120
+
+rate_limits:
+  requests_per_hour: 60
+  requests_per_minute_burst: 10
+
+models:
+  default: "claude-sonnet-4-6"
+  allowed:
+    - "claude-sonnet-4-6"
+    - "claude-haiku-4-5-20251001"
+  denied_for_autonomous:
+    - "claude-opus-4-7"   # only via explicit user-initiated /v1/complete with flag

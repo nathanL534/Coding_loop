@@ -1,0 +1,15 @@
+# Files evolver may NOT modify without human approval.
+# Bridge checks the container's manifest hash against safety/manifest.sha256
+# before serving completions. Mismatch = 403.
+
+CLAUDE.md
+safety/allowlist.yaml
+safety/budget.yaml
+safety/protected-files.txt
+claude-bridge/src/bridge/budget.py
+claude-bridge/src/bridge/policy.py
+claude-bridge/src/bridge/audit.py
+claude-bridge/src/bridge/approval.py
+claude-bridge/src/bridge/main.py
+agent/src/agent/safety_gate.py
+docs/SECURITY.md
