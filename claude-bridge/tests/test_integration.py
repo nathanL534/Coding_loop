@@ -221,6 +221,61 @@ async def test_tools_are_filtered(bridge_config, mocked_claude) -> None:
     assert len(mocked_claude) == 1
 
 
+# ---- rate limiting ----
+
+async def test_complete_rejects_over_rate_limit(tmp_path, mocked_claude) -> None:
+    """Burst cap of 2 per minute -> third request returns 429."""
+    import yaml
+
+    safety = tmp_path / "safety"
+    safety.mkdir()
+    (safety / "budget.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "daily_usd_cap": 10.0,
+                "per_wake_usd_cap": 5.0,
+                "per_request_usd_cap": 1.0,
+                "per_request_timeout_seconds": 30,
+                "rate_limits": {"requests_per_hour": 100, "requests_per_minute_burst": 2},
+                "models": {
+                    "default": "claude-sonnet-4-6",
+                    "allowed": ["claude-sonnet-4-6"],
+                    "denied_for_autonomous": [],
+                },
+            }
+        )
+    )
+    (safety / "allowlist.yaml").write_text("{}")
+    (safety / "protected-files.txt").write_text("")
+    config_toml = tmp_path / "config.toml"
+    config_toml.write_text(
+        f"""
+[bridge]
+socket_path = "{tmp_path}/bridge.sock"
+state_dir = "{tmp_path}/state"
+safety_dir = "{safety}"
+[claude]
+cli_path = "claude"
+timeout_seconds = 30
+[telegram]
+bot_token = "PASTE_BOT_TOKEN_HERE"
+allowed_user_id = 0
+"""
+    )
+    config = cfg.load(config_toml)
+    app = build_app(config)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r1 = await c.post("/v1/complete", json={"prompt": "a", "cost_estimate_usd": 0.01})
+        r2 = await c.post("/v1/complete", json={"prompt": "b", "cost_estimate_usd": 0.01})
+        r3 = await c.post("/v1/complete", json={"prompt": "c", "cost_estimate_usd": 0.01})
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert r3.status_code == 429
+        assert "burst" in r3.json()["detail"]
+
+
 # ---- notify w/o gateway ----
 
 async def test_notify_503_without_gateway(bridge_config, mocked_claude) -> None:

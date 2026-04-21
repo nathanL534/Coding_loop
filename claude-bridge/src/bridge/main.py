@@ -6,7 +6,6 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
@@ -20,16 +19,12 @@ from .claude_client import ClaudeClient, ClaudeSubprocessError
 from .killswitch import KillSwitch, KillSwitchActive
 from .manifest import verify as manifest_verify
 from .policy import Policy
+from .ratelimit import RateLimiter, RateLimitExceeded
 
 log = logging.getLogger("bridge")
 
 
 # ---------- Request / response models ----------
-
-
-class Message(BaseModel):
-    role: str
-    content: Any
 
 
 class CompleteRequest(BaseModel):
@@ -90,6 +85,7 @@ class State:
     def __init__(self) -> None:
         self.config: cfg.BridgeConfig | None = None
         self.budget: BudgetTracker | None = None
+        self.rate: RateLimiter | None = None
         self.audit: AuditLog | None = None
         self.kill: KillSwitch | None = None
         self.policy: Policy | None = None
@@ -117,6 +113,10 @@ def build_app(config: cfg.BridgeConfig | None = None) -> FastAPI:
         daily_cap_usd=c.budget.daily_usd_cap,
         per_wake_cap_usd=c.budget.per_wake_usd_cap,
         per_request_cap_usd=c.budget.per_request_usd_cap,
+    )
+    state.rate = RateLimiter(
+        per_hour=c.budget.requests_per_hour,
+        burst_per_minute=c.budget.requests_per_minute_burst,
     )
     state.audit = AuditLog(path=c.state_dir / "audit.log")
     state.kill = KillSwitch(flag_path=c.state_dir / "pause")
@@ -182,6 +182,12 @@ def build_app(config: cfg.BridgeConfig | None = None) -> FastAPI:
         except KillSwitchActive as e:
             await s.audit.write(event="reject.kill", request_id=req_id, task_id=body.task_id, error=str(e))
             raise HTTPException(503, detail=str(e))
+
+        try:
+            await s.rate.check()
+        except RateLimitExceeded as e:
+            await s.audit.write(event="reject.rate", request_id=req_id, task_id=body.task_id, error=str(e))
+            raise HTTPException(429, detail=str(e))
 
         # Manifest re-verify on every call so a runtime tamper is caught before spend.
         tampered = _manifest_diffs(s)
