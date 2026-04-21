@@ -65,3 +65,9 @@ class AuditLog:
             with self._path.open("a", encoding="utf-8") as f:
                 f.write(line)
                 f.flush()
+                try:
+                    import os as _os
+                    _os.fsync(f.fileno())
+                except OSError:
+                    # fsync not supported on this FS; best-effort durability.
+                    pass

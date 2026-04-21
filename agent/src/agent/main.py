@@ -46,7 +46,7 @@ async def listen() -> int:
                 res = await bc.complete(
                     prompt=text,
                     task_id=f"chat-{msg['ts']:.0f}",
-                    is_autonomous=False,
+                    inbox_token=msg.get("inbox_token"),
                     cost_estimate_usd=0.05,
                 )
                 await bc.notify(res.content)

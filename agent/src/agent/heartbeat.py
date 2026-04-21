@@ -79,7 +79,7 @@ async def run_once(
             res = await bridge.complete(
                 prompt=msg["text"],
                 task_id=f"chat-{int(msg['ts'])}",
-                is_autonomous=False,
+                inbox_token=msg.get("inbox_token"),
                 cost_estimate_usd=0.05,
             )
             await bridge.notify(res.content)
@@ -101,7 +101,6 @@ async def run_once(
                     res = await bridge.complete(
                         prompt=t.title,
                         task_id=t.id,
-                        is_autonomous=True,
                         cost_estimate_usd=0.10,
                     )
                     tasks.update_status(t.id, TaskStatus.DONE, notes=res.content[:500])

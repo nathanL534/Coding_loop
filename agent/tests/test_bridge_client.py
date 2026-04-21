@@ -65,7 +65,7 @@ allowed_user_id = 0
     config = cfg.load(config_toml)
 
     # Stub the claude subprocess.
-    async def fake_complete(self, *, prompt, model, system=None, max_turns=None):
+    async def fake_complete(self, *, prompt, model, system=None, max_turns=None, allowed_tool_names=None):
         return ClaudeResult(
             content=f"echo: {prompt}", model=model, cost_usd=0.01, duration_ms=10, raw={}
         )

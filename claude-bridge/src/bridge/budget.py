@@ -73,7 +73,11 @@ class BudgetTracker:
             self._state = {"day": today, "spent_today_usd": 0.0, "spent_this_wake_usd": 0.0}
 
     async def check_can_spend(self, estimate_usd: float) -> None:
-        """Raise BudgetExceeded if this estimate would blow any cap."""
+        """Raise BudgetExceeded if this estimate would blow any cap (no-op check).
+
+        Prefer `reserve()` in production — a check without a debit leaves a
+        concurrency window where N parallel requests all pass the check.
+        """
         if estimate_usd < 0:
             raise ValueError("estimate_usd must be non-negative")
         if estimate_usd > self._per_request_cap:
@@ -93,8 +97,48 @@ class BudgetTracker:
                     f"${estimate_usd:.4f} > ${self._per_wake_cap:.4f}"
                 )
 
+    async def reserve(self, estimate_usd: float) -> None:
+        """Reserve (debit) the estimate atomically. Call settle() after the
+        request to true-up to actual spend. This closes the TOCTOU window
+        between check_can_spend and record that concurrent requests could race."""
+        if estimate_usd < 0:
+            raise ValueError("estimate_usd must be non-negative")
+        if estimate_usd > self._per_request_cap:
+            raise BudgetExceeded(
+                f"per-request cap: estimate ${estimate_usd:.4f} > cap ${self._per_request_cap:.4f}"
+            )
+        async with self._lock:
+            self._roll_day_if_needed()
+            new_day = self._state["spent_today_usd"] + estimate_usd
+            new_wake = self._state["spent_this_wake_usd"] + estimate_usd
+            if new_day > self._daily_cap:
+                raise BudgetExceeded(
+                    f"daily cap: spent ${self._state['spent_today_usd']:.4f} + "
+                    f"${estimate_usd:.4f} > ${self._daily_cap:.4f}"
+                )
+            if new_wake > self._per_wake_cap:
+                raise BudgetExceeded(
+                    f"per-wake cap: wake spend ${self._state['spent_this_wake_usd']:.4f} + "
+                    f"${estimate_usd:.4f} > ${self._per_wake_cap:.4f}"
+                )
+            self._state["spent_today_usd"] = new_day
+            self._state["spent_this_wake_usd"] = new_wake
+            self._write(self._state)
+
+    async def settle(self, *, reserved: float, actual: float) -> None:
+        """Reconcile a prior reserve() against real cost. Negative deltas refund."""
+        if reserved < 0 or actual < 0:
+            raise ValueError("amounts must be non-negative")
+        delta = actual - reserved
+        async with self._lock:
+            self._roll_day_if_needed()
+            # Never allow balances to go negative (e.g. if settle arrives twice).
+            self._state["spent_today_usd"] = max(0.0, self._state["spent_today_usd"] + delta)
+            self._state["spent_this_wake_usd"] = max(0.0, self._state["spent_this_wake_usd"] + delta)
+            self._write(self._state)
+
     async def record(self, actual_usd: float) -> None:
-        """Record actual spend after a successful request."""
+        """Record actual spend after a successful request (legacy path)."""
         if actual_usd < 0:
             raise ValueError("actual_usd must be non-negative")
         async with self._lock:

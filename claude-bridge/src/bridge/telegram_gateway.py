@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from dataclasses import dataclass
+from typing import Awaitable, Callable
 
 from telegram import Update
 from telegram.ext import (
@@ -23,6 +25,7 @@ from telegram.ext import (
 )
 
 from .approval import ApprovalQueue
+from .killswitch import KillSwitch
 
 log = logging.getLogger("bridge.telegram")
 
@@ -33,6 +36,7 @@ class InboxMessage:
     user_id: int
     text: str
     ts: float
+    inbox_token: str = ""   # bridge-issued; container echoes back to prove user-initiation
 
 
 class TelegramGateway:
@@ -42,6 +46,8 @@ class TelegramGateway:
         bot_token: str,
         allowed_user_id: int,
         approvals: ApprovalQueue,
+        kill_switch: KillSwitch,
+        budget_snapshot: "Callable[[], Awaitable[dict]] | None" = None,
     ) -> None:
         if not bot_token or bot_token == "PASTE_BOT_TOKEN_HERE":
             raise ValueError("telegram.bot_token is not configured")
@@ -50,6 +56,8 @@ class TelegramGateway:
 
         self._allowed = allowed_user_id
         self._approvals = approvals
+        self._kill = kill_switch
+        self._budget_snapshot = budget_snapshot
         self._inbox: asyncio.Queue[InboxMessage] = asyncio.Queue(maxsize=1000)
         self._app: Application = Application.builder().token(bot_token).build()
         self._wire_handlers()
@@ -95,6 +103,7 @@ class TelegramGateway:
                     user_id=update.effective_user.id,
                     text=msg.text,
                     ts=msg.date.timestamp(),
+                    inbox_token=secrets.token_urlsafe(24),
                 )
             )
         except asyncio.QueueFull:
@@ -103,13 +112,14 @@ class TelegramGateway:
     async def _on_pause(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update):
             return await self._reject_silently(update)
-        # Kill switch activation is handled out-of-band by the caller; here we just ACK.
-        await update.message.reply_text("pause command received — activate kill switch on host")
+        self._kill.activate()
+        await update.message.reply_text("kill switch ACTIVE. bridge will refuse all requests.")
 
     async def _on_resume(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update):
             return await self._reject_silently(update)
-        await update.message.reply_text("resume command received — clear kill switch on host")
+        self._kill.clear()
+        await update.message.reply_text("kill switch cleared. bridge accepting requests.")
 
     async def _on_yes(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update):
@@ -134,11 +144,29 @@ class TelegramGateway:
     async def _on_budget(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update):
             return await self._reject_silently(update)
-        # Budget snapshot is injected by whoever wires this. Placeholder until wired.
-        await update.message.reply_text("budget command received — will wire to bridge state")
+        if self._budget_snapshot is None:
+            await update.message.reply_text("budget snapshot not wired")
+            return
+        snap = await self._budget_snapshot()
+        await update.message.reply_text(
+            f"today: ${snap['spent_today_usd']:.3f} / ${snap['daily_cap_usd']:.2f}\n"
+            f"wake:  ${snap['spent_this_wake_usd']:.3f} / ${snap['per_wake_cap_usd']:.2f}"
+        )
 
     async def send(self, text: str) -> None:
         """Outbound: bridge /v1/notify handler calls this."""
+        await self._app.bot.send_message(chat_id=self._allowed, text=text)
+
+    async def push_approval(self, *, request_id: str, action: str, reason: str, cost_estimate_usd: float) -> None:
+        """Push a pending approval to the user so they can /yes &lt;id&gt; or /no &lt;id&gt;."""
+        text = (
+            f"APPROVAL NEEDED\n"
+            f"action: {action}\n"
+            f"reason: {reason}\n"
+            f"cost est: ${cost_estimate_usd:.3f}\n"
+            f"id: {request_id}\n\n"
+            f"/yes {request_id}  or  /no {request_id}"
+        )
         await self._app.bot.send_message(chat_id=self._allowed, text=text)
 
     def inbox(self) -> asyncio.Queue[InboxMessage]:

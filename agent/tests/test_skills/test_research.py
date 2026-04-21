@@ -37,3 +37,43 @@ def test_is_allowed_rejects_lookalike() -> None:
 async def test_fetch_rejects_bad_domain() -> None:
     with pytest.raises(DomainNotAllowed):
         await fetch("https://example.com/", allowed_domains=ALLOWED)
+
+
+async def test_fetch_rejects_redirect_to_disallowed_domain(monkeypatch) -> None:
+    """A redirect from an allowlisted domain to a disallowed one must be blocked."""
+    import httpx
+
+    from agent.skills import research as research_mod
+
+    call_log = []
+
+    class _FakeResponse:
+        def __init__(self, status_code, headers=None, content=b"", url="https://wikipedia.org/x"):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self.content = content
+            self.encoding = "utf-8"
+            self.url = httpx.URL(url)
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, headers=None):
+            call_log.append(url)
+            # First call: redirect to evil.com
+            return _FakeResponse(
+                status_code=302,
+                headers={"location": "https://evil.example/stolen"},
+                url=url,
+            )
+
+    monkeypatch.setattr(research_mod.httpx, "AsyncClient", _FakeClient)
+    with pytest.raises(research_mod.DomainNotAllowed):
+        await research_mod.fetch("https://wikipedia.org/a", allowed_domains=ALLOWED)

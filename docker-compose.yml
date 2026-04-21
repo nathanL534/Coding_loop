@@ -42,7 +42,7 @@ services:
       - agent-memory:/memory
       # tmpfs for /tmp since root FS is read-only.
     tmpfs:
-      - /tmp:size=64m,mode=1777
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
 
     # Network isolation: block direct internet, allow only the egress proxy (optional).
     # For Phase 1 we keep bridge+telegram paths on the host, so the container does not

@@ -36,13 +36,25 @@ class ClaudeClient:
         model: str,
         system: str | None = None,
         max_turns: int | None = None,
+        allowed_tool_names: list[str] | None = None,
     ) -> ClaudeResult:
-        """Invoke `claude -p` with --output-format=json. Returns parsed result."""
+        """Invoke `claude -p` with --output-format=json. Returns parsed result.
+
+        Notes on system prompt authority: `--append-system-prompt` does NOT
+        replace the CLI's default system prompt. If a malicious/bogus
+        CLAUDE.md is discoverable in the working dir it could outrank META.
+        The bridge subprocess runs with cwd=$BRIDGE_WORKDIR (a dir we control)
+        so nothing lower wins the ancestor-walk. Document this in OPERATIONS.
+        """
         argv = [self._cli, "-p", prompt, "--output-format", "json", "--model", model]
         if system:
             argv += ["--append-system-prompt", system]
         if max_turns is not None:
             argv += ["--max-turns", str(int(max_turns))]
+        if allowed_tool_names is not None:
+            # Empty list = no tools at all (tightest). The CLI may ignore this
+            # flag depending on version; verify with `claude -p --help`.
+            argv += ["--allowed-tools", ",".join(allowed_tool_names) or "NONE"]
 
         proc = await asyncio.create_subprocess_exec(
             *argv,

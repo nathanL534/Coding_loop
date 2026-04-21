@@ -57,12 +57,13 @@ class BridgeClient:
         tools: list[dict] | None = None,
         max_turns: int | None = None,
         task_id: str | None = None,
-        is_autonomous: bool = True,
+        inbox_token: str | None = None,
         cost_estimate_usd: float = 0.05,
     ) -> CompleteResult:
+        """Autonomy is decided by the bridge. Pass the inbox_token from a
+        prior /v1/inbox delivery to mark this call as user-initiated."""
         body: dict = {
             "prompt": prompt,
-            "is_autonomous": is_autonomous,
             "cost_estimate_usd": cost_estimate_usd,
         }
         if system is not None:
@@ -75,6 +76,8 @@ class BridgeClient:
             body["max_turns"] = max_turns
         if task_id is not None:
             body["task_id"] = task_id
+        if inbox_token is not None:
+            body["inbox_token"] = inbox_token
 
         try:
             r = await self._client.post("/v1/complete", json=body)

@@ -8,7 +8,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Awaitable, Callable, Literal
 
 
 class ApprovalTimeout(Exception):
@@ -34,12 +34,20 @@ class ApprovalRequest:
         }
 
 
+# Notifier pushes the approval to Telegram so the user can resolve it.
+ApprovalNotifier = Callable[[ApprovalRequest], Awaitable[None]]
+
+
 class ApprovalQueue:
     """In-memory pending approvals. The Telegram gateway reads and resolves them."""
 
-    def __init__(self) -> None:
+    def __init__(self, notifier: ApprovalNotifier | None = None) -> None:
         self._pending: dict[str, ApprovalRequest] = {}
         self._lock = asyncio.Lock()
+        self._notifier = notifier
+
+    def set_notifier(self, notifier: ApprovalNotifier) -> None:
+        self._notifier = notifier
 
     async def request(
         self, *, action: str, reason: str, cost_estimate_usd: float, timeout_seconds: int = 3600
@@ -54,6 +62,12 @@ class ApprovalQueue:
         )
         async with self._lock:
             self._pending[req.id] = req
+        if self._notifier is not None:
+            try:
+                await self._notifier(req)
+            except Exception:
+                # Don't drop the future on notifier failure, but caller will time out.
+                pass
         try:
             return await asyncio.wait_for(req.future, timeout=timeout_seconds)
         except asyncio.TimeoutError:
@@ -64,10 +78,14 @@ class ApprovalQueue:
     async def resolve(self, request_id: str, decision: Literal["yes", "no"]) -> bool:
         async with self._lock:
             req = self._pending.pop(request_id, None)
-        if req is None:
-            return False
-        req.future.set_result(decision == "yes")
-        return True
+            if req is None:
+                return False
+            # Guard against setting result on a future that wait_for already cancelled
+            # (e.g. timing out simultaneously).
+            if req.future.done() or req.future.cancelled():
+                return False
+            req.future.set_result(decision == "yes")
+            return True
 
     async def list(self) -> list[dict]:
         async with self._lock:
