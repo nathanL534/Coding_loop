@@ -4,11 +4,19 @@
 
 | Zone | Contents | Can be compromised? |
 |------|----------|---------------------|
-| macOS host | Keychain, bridge process, launchd plist, Telegram bot token | Assumed trusted |
-| Bridge | Policy, budget, audit, approval, model allowlist | Trusted |
+| macOS host | Keychain, bridge process, launchd plist, Telegram bot token, OpenAI API key | Assumed trusted |
+| Bridge | Policy, budget, audit, approval, model allowlist, Whisper/TTS | Trusted |
 | Safety mount (`/safety`, `/goals.md` in container) | Hashed allowlists, kill-switch flag, goals | Trusted (read-only to container) |
 | Container | hermes, evolver, skills, memory, task queue, state | **Untrusted** |
-| External (web, Telegram msgs, docs) | User content, web pages | **Hostile** (assume prompt injection) |
+| External (web, Telegram msgs, voice notes, docs) | User content, audio, web pages | **Hostile** (assume prompt injection) |
+
+## Voice
+
+- OpenAI API key lives host-side in `config.toml`; never in container.
+- Inbound voice notes: Telegram → bridge downloads OGG → bridge calls Whisper → transcribed text enters the inbox queue with `from_voice=true` flag. Container only ever sees text.
+- Outbound voice notes: container POSTs `/v1/notify` with `voice: true` → bridge runs TTS (OGG Opus) → Telegram `sendVoice`. TTS errors gracefully fall back to text.
+- OpenAI spend (Whisper + TTS) is charged against the same `daily_usd_cap` as Claude.
+- Transcribed voice text is treated exactly like typed text: user-initiated, trust=`user`, gets the same META system-prompt framing.
 
 ## Invariants (must never break)
 

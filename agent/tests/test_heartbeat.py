@@ -39,8 +39,9 @@ class _FakeBridge:
             request_id="r", content=f"result: {prompt}", model="stub", cost_usd=0.01, duration_ms=5
         )
 
-    async def notify(self, text: str) -> None:
-        self.notify_log.append(text)
+    async def notify(self, text: str, *, voice: bool = False) -> dict:
+        self.notify_log.append({"text": text, "voice": voice})
+        return {"ok": True, "sent_as": "voice" if voice else "text"}
 
 
 def _ts(hour: int) -> datetime:
@@ -67,6 +68,17 @@ async def test_run_once_handles_inbox(tmp_path: Path) -> None:
     assert res.messages_handled == 1
     assert len(br.complete_log) == 1
     assert br.notify_log  # response sent
+    assert br.notify_log[0]["voice"] is False
+
+
+async def test_voice_in_gets_voice_out(tmp_path: Path) -> None:
+    br = _FakeBridge(inbox_queue=[{"text": "hello", "ts": 1.0, "from_voice": True}])
+    queue = TaskQueue(tmp_path / "tasks.json")
+    await run_once(
+        bridge=br, tasks=queue, state_path=tmp_path / "state.json", dry_run=False, now=_ts(14)
+    )
+    assert br.notify_log
+    assert br.notify_log[0]["voice"] is True
 
 
 async def test_run_once_dry_run_does_not_call_complete(tmp_path: Path) -> None:
@@ -126,7 +138,7 @@ async def test_morning_brief_sent(tmp_path: Path) -> None:
     )
     assert res.briefings_sent == 1
     # morning brief included in notify_log
-    assert any("Morning" in m for m in br.notify_log)
+    assert any("Morning" in m["text"] for m in br.notify_log)
 
 
 async def test_evening_wrap_sent(tmp_path: Path) -> None:
@@ -136,7 +148,7 @@ async def test_evening_wrap_sent(tmp_path: Path) -> None:
         bridge=br, tasks=queue, state_path=tmp_path / "state.json", dry_run=False, now=_ts(22)
     )
     assert res.briefings_sent == 1
-    assert any("wrap" in m.lower() for m in br.notify_log)
+    assert any("wrap" in m["text"].lower() for m in br.notify_log)
 
 
 async def test_task_failure_marks_failed(tmp_path: Path) -> None:

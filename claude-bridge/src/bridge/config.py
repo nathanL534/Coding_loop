@@ -37,6 +37,20 @@ class ClaudeConfig:
 
 
 @dataclass(frozen=True)
+class OpenAIConfig:
+    """OpenAI is used for Whisper (voice-in) and TTS (voice-out) only."""
+
+    api_key: str
+    whisper_model: str = "whisper-1"
+    tts_model: str = "tts-1-hd"
+    tts_voice: str = "nova"
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass(frozen=True)
 class BridgeConfig:
     socket_path: Path
     state_dir: Path
@@ -44,6 +58,7 @@ class BridgeConfig:
     budget: BudgetConfig
     telegram: TelegramConfig
     claude: ClaudeConfig
+    openai: OpenAIConfig
     allowlist: dict[str, Any] = field(default_factory=dict)
     protected_files: tuple[str, ...] = ()
 
@@ -92,6 +107,7 @@ def load(config_path: Path) -> BridgeConfig:
     state_dir = _expand(br["state_dir"])
     state_dir.mkdir(parents=True, exist_ok=True)
 
+    oai = data.get("openai", {}) or {}
     return BridgeConfig(
         socket_path=Path(br["socket_path"]),
         state_dir=state_dir,
@@ -105,6 +121,12 @@ def load(config_path: Path) -> BridgeConfig:
         claude=ClaudeConfig(
             cli_path=data["claude"]["cli_path"],
             timeout_seconds=int(data["claude"]["timeout_seconds"]),
+        ),
+        openai=OpenAIConfig(
+            api_key=str(oai.get("api_key") or os.environ.get("OPENAI_API_KEY") or ""),
+            whisper_model=str(oai.get("whisper_model") or "whisper-1"),
+            tts_model=str(oai.get("tts_model") or "tts-1-hd"),
+            tts_voice=str(oai.get("tts_voice") or "nova"),
         ),
         allowlist=load_allowlist(safety_dir),
         protected_files=load_protected_files(safety_dir),

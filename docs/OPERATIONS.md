@@ -18,6 +18,7 @@ cd ~/Coding_loop
 # 4. Configure
 cp claude-bridge/config.example.toml claude-bridge/config.toml
 # Edit: telegram.bot_token, telegram.allowed_user_id
+# Edit: openai.api_key  (optional -- enables Whisper + TTS voice notes)
 # Edit: safety/goals.md with your profile
 
 # 5. Start
@@ -64,6 +65,14 @@ Before flipping the hourly cron to real (non-dry) mode:
 - Anytime: text the bot with tasks
 - Evening: check the wrap at 22:00
 - Weekly: `tail ~/.claude-bridge/audit.log | wc -l`; prune memory if disk growing
+
+## Voice notes
+
+- **Enable**: set `openai.api_key` in `config.toml`. Leave empty to disable.
+- **Inbound**: send a voice note in Telegram; bridge auto-transcribes (Whisper) and routes to the agent. You'll see the transcribed text as the agent's context.
+- **Outbound**: if the agent receives a voice note, it replies as a voice note (OpenAI TTS `nova` by default). Typed messages get typed replies.
+- **Cost**: Whisper $0.006/min + TTS `tts-1-hd` $30/1M chars. Realistic: ~$1–3/month at moderate use, charged against the same `daily_usd_cap`.
+- **Voice override**: edit `openai.tts_voice` in `config.toml` (`nova | shimmer | onyx | echo | fable | alloy`) or switch to `tts-1` for cheaper output.
 
 ## Known failure modes
 

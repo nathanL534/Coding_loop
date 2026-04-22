@@ -82,7 +82,8 @@ async def run_once(
                 inbox_token=msg.get("inbox_token"),
                 cost_estimate_usd=0.05,
             )
-            await bridge.notify(res.content)
+            # Reply in-kind: voice-in -> voice-out.
+            await bridge.notify(res.content, voice=bool(msg.get("from_voice")))
         except Exception as e:
             log.exception("failed to handle inbound: %s", e)
 

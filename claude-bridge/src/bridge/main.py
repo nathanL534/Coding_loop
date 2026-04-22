@@ -18,6 +18,7 @@ from .budget import BudgetExceeded, BudgetTracker
 from .claude_client import ClaudeClient, ClaudeSubprocessError
 from .killswitch import KillSwitch, KillSwitchActive
 from .manifest import verify as manifest_verify
+from .openai_client import OpenAIClient
 from .policy import Policy
 from .ratelimit import RateLimiter, RateLimitExceeded
 
@@ -67,6 +68,7 @@ class ApproveResponse(BaseModel):
 
 class NotifyBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
+    voice: bool = False   # true -> TTS + send as Telegram voice note
 
 
 class BudgetResponse(BaseModel):
@@ -90,8 +92,10 @@ class State:
         self.kill: KillSwitch | None = None
         self.policy: Policy | None = None
         self.claude: ClaudeClient | None = None
+        self.openai: OpenAIClient | None = None
         self.approvals: ApprovalQueue | None = None
-        self.notify_callable = None         # host-only: Telegram send
+        self.notify_callable = None         # host-only: Telegram send (text)
+        self.notify_voice_callable = None   # host-only: Telegram send (voice note)
         self.inbox_queue = None             # set by telegram wiring
         self.valid_inbox_tokens: set[str] = set()
         self.repo_root: Path | None = None
@@ -128,6 +132,13 @@ def build_app(config: cfg.BridgeConfig | None = None) -> FastAPI:
     state.claude = ClaudeClient(
         cli_path=c.claude.cli_path, timeout_seconds=c.claude.timeout_seconds
     )
+    if c.openai.enabled:
+        state.openai = OpenAIClient(
+            api_key=c.openai.api_key,
+            whisper_model=c.openai.whisper_model,
+            tts_model=c.openai.tts_model,
+            tts_voice=c.openai.tts_voice,
+        )
     state.approvals = ApprovalQueue()
     state.repo_root = c.safety_dir.parent  # safety/ is under repo root
 
@@ -297,8 +308,15 @@ def build_app(config: cfg.BridgeConfig | None = None) -> FastAPI:
             raise HTTPException(503, detail=str(e))
         if s.notify_callable is None:
             raise HTTPException(503, detail="telegram gateway not attached")
+        if body.voice:
+            if s.notify_voice_callable is None:
+                # Graceful degrade: fall back to text rather than erroring.
+                await s.notify_callable(body.text)
+                return {"ok": True, "sent_as": "text", "reason": "voice not configured"}
+            await s.notify_voice_callable(body.text)
+            return {"ok": True, "sent_as": "voice"}
         await s.notify_callable(body.text)
-        return {"ok": True}
+        return {"ok": True, "sent_as": "text"}
 
     @app.get("/v1/inbox")
     async def inbox(timeout: float = 25.0, s: State = Depends(get_state)) -> dict:
@@ -326,6 +344,7 @@ def build_app(config: cfg.BridgeConfig | None = None) -> FastAPI:
                 "text": m.text,
                 "ts": m.ts,
                 "inbox_token": getattr(m, "inbox_token", ""),
+                "from_voice": getattr(m, "from_voice", False),
             }
         }
 
@@ -354,16 +373,65 @@ def _manifest_diffs(state: State) -> list[str]:
     return manifest_verify(state.repo_root, manifest_path, list(state.config.protected_files))
 
 
+def attach_telegram(app: FastAPI) -> None:
+    """Construct the Telegram gateway and wire its inbox + send methods onto State.
+
+    Separated from build_app so tests can construct the app without a real bot.
+    """
+    from .telegram_gateway import TelegramGateway
+
+    state: State = app.state.bridge
+    if state.config is None:
+        return
+    tg_cfg = state.config.telegram
+    if not tg_cfg.bot_token or tg_cfg.bot_token == "PASTE_BOT_TOKEN_HERE":
+        log.warning("telegram not configured; /v1/notify and /v1/inbox will 503")
+        return
+
+    async def record_cost(usd: float) -> None:
+        # OpenAI spend (Whisper/TTS) charged against the same daily budget as Claude.
+        if state.budget is not None and usd > 0:
+            await state.budget.record(usd)
+
+    async def budget_snapshot() -> dict:
+        assert state.budget is not None
+        snap = await state.budget.snapshot()
+        return snap.__dict__
+
+    gateway = TelegramGateway(
+        bot_token=tg_cfg.bot_token,
+        allowed_user_id=tg_cfg.allowed_user_id,
+        approvals=state.approvals,
+        kill_switch=state.kill,
+        budget_snapshot=budget_snapshot if state.budget else None,
+        openai=state.openai,
+        record_cost=record_cost if state.openai else None,
+    )
+    state.notify_callable = gateway.send
+    state.notify_voice_callable = gateway.send_voice if state.openai else None
+    state.inbox_queue = gateway.inbox()
+    app.state.telegram = gateway
+
+
 def run() -> None:
     logging.basicConfig(level=logging.INFO)
     c = _load_config()
     app = build_app(c)
-    uvicorn.run(
-        app,
-        uds=str(c.socket_path),
-        log_level="info",
-        access_log=False,
-    )
+    attach_telegram(app)
+    # Start the Telegram polling loop alongside uvicorn.
+    import asyncio as _asyncio
+
+    async def _main() -> None:
+        if hasattr(app.state, "telegram"):
+            await app.state.telegram.start()
+        server = uvicorn.Server(
+            uvicorn.Config(app, uds=str(c.socket_path), log_level="info", access_log=False)
+        )
+        await server.serve()
+        if hasattr(app.state, "telegram"):
+            await app.state.telegram.stop()
+
+    _asyncio.run(_main())
 
 
 if __name__ == "__main__":

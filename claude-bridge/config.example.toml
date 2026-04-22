@@ -19,6 +19,15 @@ allowed_user_id = 0
 # Polling vs webhook. Polling is simpler for a single-user bot.
 mode = "polling"
 
+[openai]
+# Same key you use with the OpenAI dashboard. Powers Whisper (voice-in)
+# and TTS (voice-out) for Telegram voice notes. Never passed into container.
+# Leave empty to disable voice features.
+api_key = ""
+whisper_model = "whisper-1"
+tts_model = "tts-1-hd"   # tts-1 = cheaper, tts-1-hd = more natural
+tts_voice = "nova"       # nova | shimmer | onyx | echo | fable | alloy
+
 [budget]
 # These override safety/budget.yaml for development; in production, the YAML wins.
 # Leaving empty here = use YAML.

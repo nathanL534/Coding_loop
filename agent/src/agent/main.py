@@ -49,7 +49,8 @@ async def listen() -> int:
                     inbox_token=msg.get("inbox_token"),
                     cost_estimate_usd=0.05,
                 )
-                await bc.notify(res.content)
+                # Reply in the same modality the user used.
+                await bc.notify(res.content, voice=bool(msg.get("from_voice")))
             except BridgeUnavailable as e:
                 log.error("bridge unavailable: %s", e)
                 await asyncio.sleep(5)

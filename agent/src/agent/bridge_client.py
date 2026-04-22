@@ -93,9 +93,13 @@ class BridgeClient:
             duration_ms=data["duration_ms"],
         )
 
-    async def notify(self, text: str) -> None:
-        r = await self._client.post("/v1/notify", json={"text": text})
+    async def notify(self, text: str, *, voice: bool = False) -> dict:
+        r = await self._client.post("/v1/notify", json={"text": text, "voice": voice})
         r.raise_for_status()
+        try:
+            return r.json()
+        except Exception:
+            return {}
 
     async def approve(
         self, *, action: str, reason: str, cost_estimate_usd: float = 0.0, timeout_seconds: int = 3600

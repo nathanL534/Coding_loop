@@ -287,6 +287,93 @@ async def test_notify_503_without_gateway(bridge_config, mocked_claude) -> None:
         assert r.status_code == 503
 
 
+async def test_notify_text_path(bridge_config, mocked_claude) -> None:
+    """Wire notify_callable to a capture so text messages flow through."""
+    app = build_app(bridge_config)
+    sent: list[str] = []
+
+    async def fake_send(text: str) -> None:
+        sent.append(text)
+
+    app.state.bridge.notify_callable = fake_send
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.post("/v1/notify", json={"text": "hello", "voice": False})
+        assert r.status_code == 200
+        assert r.json()["sent_as"] == "text"
+    assert sent == ["hello"]
+
+
+async def test_notify_voice_falls_back_when_no_voice_callable(bridge_config, mocked_claude) -> None:
+    """If voice=True but no voice gateway, fall back to text rather than erroring."""
+    app = build_app(bridge_config)
+    sent: list[str] = []
+
+    async def fake_send(text: str) -> None:
+        sent.append(text)
+
+    app.state.bridge.notify_callable = fake_send
+    # Intentionally leave notify_voice_callable = None
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.post("/v1/notify", json={"text": "hello", "voice": True})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["sent_as"] == "text"
+        assert body["reason"] == "voice not configured"
+    assert sent == ["hello"]
+
+
+async def test_notify_voice_path(bridge_config, mocked_claude) -> None:
+    app = build_app(bridge_config)
+    voice_sent: list[str] = []
+
+    async def fake_voice(text: str) -> None:
+        voice_sent.append(text)
+
+    app.state.bridge.notify_callable = lambda _t: None   # won't be called
+    app.state.bridge.notify_voice_callable = fake_voice
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.post("/v1/notify", json={"text": "read aloud", "voice": True})
+        assert r.status_code == 200
+        assert r.json()["sent_as"] == "voice"
+    assert voice_sent == ["read aloud"]
+
+
+async def test_inbox_surfaces_from_voice_flag(bridge_config, mocked_claude) -> None:
+    """Voice messages in the inbox should expose from_voice=True to the container."""
+    from bridge.telegram_gateway import InboxMessage
+
+    app = build_app(bridge_config)
+    q: "asyncio.Queue[InboxMessage]"
+    import asyncio
+    q = asyncio.Queue()
+    await q.put(
+        InboxMessage(
+            chat_id=1, user_id=2, text="voice content", ts=3.0,
+            inbox_token="tok", from_voice=True,
+        )
+    )
+    app.state.bridge.inbox_queue = q
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        r = await c.get("/v1/inbox", params={"timeout": 1.0})
+        assert r.status_code == 200
+        msg = r.json()["msg"]
+        assert msg["from_voice"] is True
+        assert msg["text"] == "voice content"
+        assert msg["inbox_token"] == "tok"
+
+
 # ---- autonomy decision is bridge-side, not container-side ----
 
 async def test_container_cannot_claim_user_initiated_without_token(

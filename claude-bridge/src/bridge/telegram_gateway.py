@@ -26,6 +26,7 @@ from telegram.ext import (
 
 from .approval import ApprovalQueue
 from .killswitch import KillSwitch
+from .openai_client import OpenAIClient, OpenAIError
 
 log = logging.getLogger("bridge.telegram")
 
@@ -37,6 +38,7 @@ class InboxMessage:
     text: str
     ts: float
     inbox_token: str = ""   # bridge-issued; container echoes back to prove user-initiation
+    from_voice: bool = False
 
 
 class TelegramGateway:
@@ -48,6 +50,8 @@ class TelegramGateway:
         approvals: ApprovalQueue,
         kill_switch: KillSwitch,
         budget_snapshot: "Callable[[], Awaitable[dict]] | None" = None,
+        openai: OpenAIClient | None = None,
+        record_cost: "Callable[[float], Awaitable[None]] | None" = None,
     ) -> None:
         if not bot_token or bot_token == "PASTE_BOT_TOKEN_HERE":
             raise ValueError("telegram.bot_token is not configured")
@@ -58,6 +62,8 @@ class TelegramGateway:
         self._approvals = approvals
         self._kill = kill_switch
         self._budget_snapshot = budget_snapshot
+        self._openai = openai
+        self._record_cost = record_cost
         self._inbox: asyncio.Queue[InboxMessage] = asyncio.Queue(maxsize=1000)
         self._app: Application = Application.builder().token(bot_token).build()
         self._wire_handlers()
@@ -70,6 +76,7 @@ class TelegramGateway:
         self._app.add_handler(CommandHandler("no", self._on_no))
         self._app.add_handler(CommandHandler("budget", self._on_budget))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text))
+        self._app.add_handler(MessageHandler(filters.VOICE, self._on_voice))
 
     def _is_allowed(self, update: Update) -> bool:
         u = update.effective_user
@@ -104,6 +111,61 @@ class TelegramGateway:
                     text=msg.text,
                     ts=msg.date.timestamp(),
                     inbox_token=secrets.token_urlsafe(24),
+                )
+            )
+        except asyncio.QueueFull:
+            await msg.reply_text("inbox is full; try again in a minute")
+
+    async def _on_voice(self, update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_allowed(update):
+            return await self._reject_silently(update)
+        msg = update.message
+        if msg is None or msg.voice is None:
+            return
+        if self._openai is None:
+            await msg.reply_text("voice is disabled (no openai key configured)")
+            return
+
+        voice = msg.voice
+        try:
+            tg_file = await voice.get_file()
+            audio_bytes = bytes(await tg_file.download_as_bytearray())
+        except Exception as e:
+            log.exception("voice download failed: %s", e)
+            await msg.reply_text("could not fetch voice note; try again")
+            return
+
+        try:
+            res = await self._openai.transcribe(
+                audio_bytes,
+                filename="voice.ogg",
+                audio_seconds=float(voice.duration or 0) or None,
+            )
+        except OpenAIError as e:
+            log.exception("whisper failed: %s", e)
+            await msg.reply_text("could not transcribe voice; try typing instead")
+            return
+
+        if self._record_cost is not None:
+            try:
+                await self._record_cost(res.cost_usd)
+            except Exception as e:
+                log.exception("record_cost failed: %s", e)
+
+        text = res.text.strip()
+        if not text:
+            await msg.reply_text("voice came back empty")
+            return
+
+        try:
+            self._inbox.put_nowait(
+                InboxMessage(
+                    chat_id=msg.chat_id,
+                    user_id=update.effective_user.id,
+                    text=text,
+                    ts=msg.date.timestamp(),
+                    inbox_token=secrets.token_urlsafe(24),
+                    from_voice=True,
                 )
             )
         except asyncio.QueueFull:
@@ -156,6 +218,28 @@ class TelegramGateway:
     async def send(self, text: str) -> None:
         """Outbound: bridge /v1/notify handler calls this."""
         await self._app.bot.send_message(chat_id=self._allowed, text=text)
+
+    async def send_voice(self, text: str) -> None:
+        """Outbound voice note. Runs TTS then posts OGG Opus as a Telegram voice."""
+        if self._openai is None:
+            # Fall back to text if voice isn't configured so callers don't have to check.
+            await self.send(text)
+            return
+        try:
+            res = await self._openai.tts(text)
+        except OpenAIError as e:
+            log.exception("tts failed, falling back to text: %s", e)
+            await self.send(text)
+            return
+        if self._record_cost is not None:
+            try:
+                await self._record_cost(res.cost_usd)
+            except Exception as e:
+                log.exception("record_cost failed: %s", e)
+        import io
+        buf = io.BytesIO(res.audio_bytes)
+        buf.name = "voice.ogg"
+        await self._app.bot.send_voice(chat_id=self._allowed, voice=buf)
 
     async def push_approval(self, *, request_id: str, action: str, reason: str, cost_estimate_usd: float) -> None:
         """Push a pending approval to the user so they can /yes &lt;id&gt; or /no &lt;id&gt;."""
